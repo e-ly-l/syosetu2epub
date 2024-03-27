@@ -12,6 +12,8 @@ cwd = os.getcwd()
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 class SyosetuRequest:
+    _page = 1
+
     def __init__(self):
         self.srHeaders = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0'
@@ -22,22 +24,38 @@ class SyosetuRequest:
     def getResponse(self):
         if self.link[-1] == "/":
             self.link = self.link.rstrip("/")
+            
+        novelSeries = self.link.split(".syosetu.com/", 1)[1]    
+        if "/" in novelSeries: 
+            novelSeries = novelSeries.split("/", 1)[0]            
+        
         r = requests.get(url=self.link, headers=self.srHeaders, cookies=self.srCookies)
         toc = {
+            "pages": [r.text],
             "page": r.text,
             "url": self.link
         }
+        
+        while self.link.endswith(novelSeries) and "次へ" in r.text:
+            self._page += 1
+            r = requests.get(url=self.link + "/?p=" + str(self._page), headers=self.srHeaders, cookies=self.srCookies)
+            if "次へ" not in r.text: break
+            
+            toc["pages"].append(r.text)
+            
+        
         return toc
 
 class Novel:
     def __init__(self, novelToc):
         self.chapterCount = 0
         self.tempDir = None
+        self.pages = novelToc["pages"]
         self.page = novelToc["page"]
         self.link = novelToc["url"]
         self.seriesCode = novelToc["url"].split(".syosetu.com/", 1)[1]
-        if "/" in self.seriesCode:
-            seriesCode = self.seriesCode.split("/", 1)[0]
+        if "/" in self.seriesCode: 
+            self.seriesCode = self.seriesCode.split("/", 1)[0]
         
         # collect author and title metadata
         title = self.page.split("<p class=\"novel_title\">", 1)[1]
@@ -56,19 +74,21 @@ class Novel:
     def genTableOfContents(self):
         tocInsert = ""
         tocInsertLegacy = ""
-        indexBox = self.page.split("<div class=\"index_box\">", 1)[1]
-        indexBox = self.page.split("</div><!--index_box-->", 1)[0]
-        for line in indexBox.splitlines():
-            if "class=\"chapter_title\"" in line:
-                chapter = line.split(">", 1)[1]
-                chapter = chapter.split("</div>", 1)[0]
-                tocInsert += "<li><span>" + chapter + "<span></li>\n"
-            elif "<a href=\"/" + self.seriesCode + "/" in line:
-                entry = line.split(">", 1)[1]
-                entry = entry.split("</a>", 1)[0]
-                self.chapterCount+=1
-                tocInsert += "<li><a href=\"" + str(self.chapterCount) + ".xhtml\">" + entry + "</a></li>\n"
-                tocInsertLegacy += "<navPoint id=\"toc" + str(self.chapterCount) + "\" playOrder=\"" + str(self.chapterCount) + "\"><navLabel><text>" + entry + "</text></navLabel><content src=\"" + str(self.chapterCount) + ".xhtml\"/></navPoint>"
+        for page in self.pages:
+            indexBox = page.split("<div class=\"index_box\">", 1)[1]
+            indexBox = page.split("</div><!--index_box-->", 1)[0]
+            for line in indexBox.splitlines():
+                if "class=\"chapter_title\"" in line:
+                    chapter = line.split(">", 1)[1]
+                    chapter = chapter.split("</div>", 1)[0]
+                    tocInsert += "<li><span>" + chapter + "</span></li>\n"
+                elif "<a href=\"/" + self.seriesCode + "/" in line and 'novelview_pager' not in line:
+                    entry = line.split(">", 1)[1]
+                    entry = entry.split("</a>", 1)[0]
+                    self.chapterCount+=1
+                    tocInsert += "<li><a href=\"" + str(self.chapterCount) + ".xhtml\">" + entry + "</a></li>\n"
+                    tocInsertLegacy += "<navPoint id=\"toc" + str(self.chapterCount) + "\" playOrder=\"" + str(self.chapterCount) + "\"><navLabel><text>" + entry + "</text></navLabel><content src=\"" + str(self.chapterCount) + ".xhtml\"/></navPoint>\n"
+                
         with open(os.path.join(__location__, 'files/nav.xhtml'), encoding="utf-8") as t:
             template = string.Template(t.read())
             finalOutput = template.substitute(TITLETAG=self.title, TOCTAG=tocInsert)
