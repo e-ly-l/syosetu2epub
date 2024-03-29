@@ -8,6 +8,16 @@ from datetime import datetime
 import requests
 import pytz
 
+import threading
+
+import time
+import resource
+def using(point=""):
+    usage=resource.getrusage(resource.RUSAGE_SELF)
+    return '''%s: usertime=%s systime=%s mem=%s mb
+           '''%(point,usage[0],usage[1],
+                usage[2]/1024.0 )
+
 cwd = os.getcwd()
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
@@ -110,6 +120,44 @@ class Novel:
             with open(os.path.join(oebpsDir, "titlepage.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
 
+    def getChapter(self, chapter):
+      chapterRequest = SyosetuRequest()
+      chapterRequest.link = self.link + "/" + str(chapter)
+      thisChapter = chapterRequest.getResponse()
+      
+      content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
+      title, content = content.split("</p>", 1)
+      content = content.split("<div class=\"novel_bn\">", 1)[0]
+      chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
+      for line in content.splitlines():
+          if "<br />" in line:
+              continue
+          elif "id=\"novel_honbun\"" in line:
+              continue
+          elif "id=\"novel_p\"" in line:
+              continue
+          elif "</div>" in line:
+              continue
+          elif "id=\"novel_a\"" in line:
+              line = "<br />\n"
+          elif "<p id=\"L" in line:
+              line = line.split(">", 1)[1]
+              line = line.split("</p>", 1)[0]
+              line = "<p>" + line + "</p>"
+          chapterText += line
+          chapterText += "\n"
+      with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
+          template = string.Template(t.read())
+          finalOutput = template.substitute(TITLETAG=self.title, BODYTAG=chapterText)
+          with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
+              output.write(finalOutput)
+              
+          with open(os.path.join(__location__, 'files/examples/chapter', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
+              output.write(finalOutput)
+              
+      return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
+
+
     def genBook(self):
         self.tempDir = tempfile.TemporaryDirectory()
         destination = shutil.copytree(os.path.join(__location__, 'template'), os.path.join(self.tempDir.name, self.title))
@@ -117,40 +165,24 @@ class Novel:
         self.genTitlePage()
         self.genTableOfContents()
 
+        # multithreading
+        results = []
+        def thread_run(chapter):
+            result = self.getChapter(chapter)
+            results.append(result)
+            
+        threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
+        for thread in threads:
+            thread.start()
+            
+        for thread in threads:
+            thread.join()
+        
         chapterList = ""
         chapterListAgain = ""
-        chapterRequest = SyosetuRequest()
-        for i in range(self.chapterCount):
-            chapterRequest.link = self.link + "/" + str(i+1)
-            thisChapter = chapterRequest.getResponse()
-            content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
-            title, content = content.split("</p>", 1)
-            content = content.split("<div class=\"novel_bn\">", 1)[0]
-            chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
-            for line in content.splitlines():
-                if "<br />" in line:
-                    continue
-                elif "id=\"novel_honbun\"" in line:
-                    continue
-                elif "id=\"novel_p\"" in line:
-                    continue
-                elif "</div>" in line:
-                    continue
-                elif "id=\"novel_a\"" in line:
-                    line = "<br />\n"
-                elif "<p id=\"L" in line:
-                    line = line.split(">", 1)[1]
-                    line = line.split("</p>", 1)[0]
-                    line = "<p>" + line + "</p>"
-                chapterText += line
-                chapterText += "\n"
-            with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
-                template = string.Template(t.read())
-                finalOutput = template.substitute(TITLETAG=self.title, BODYTAG=chapterText)
-                with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', (str(i + 1) + '.xhtml')), "w", encoding="utf-8") as output:
-                    output.write(finalOutput)
-            chapterList += "<item media-type=\"application/xhtml+xml\" href=\"" + str(i + 1) + ".xhtml""\" id=\"_" + str(i + 1) + ".xhtml\" />"
-            chapterListAgain += "<itemref idref=\"_" + str(i + 1) + ".xhtml\" />"
+        for result in results:
+            chapterList += result[0] + "\n"
+            chapterListAgain += result[1] + "\n"
 
         with open(os.path.join(__location__, 'files/content.opf'), encoding="utf-8") as t:
             template = string.Template(t.read())
@@ -185,6 +217,13 @@ if __name__ == "__main__":
         print("USAGE: syosetu2epub https://*syosetu.com/******")
         print("OUTPUT: EPUB formatted ebook will be generated in current working directory")
         os._exit(0)
+        
+    start = time.time()
+    print(using(f"start extract {myRequest.link}"))
 
     myNovel = Novel(myRequest.getResponse())
     myNovel.genBook()
+    
+    end = time.time()
+    print(using("end"))
+    print("Time elapsed: ", end - start)
