@@ -8,7 +8,7 @@ from datetime import datetime
 import requests
 import pytz
 
-import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import time
 import resource
@@ -21,6 +21,7 @@ def using(point=""):
 cwd = os.getcwd()
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
+# https://ncode.syosetu.com/n0611em/?p=3
 class SyosetuRequest:
     _page = 1
 
@@ -52,7 +53,6 @@ class SyosetuRequest:
             if "次へ" not in r.text: break
             
             toc["pages"].append(r.text)
-            
         
         return toc
 
@@ -64,7 +64,7 @@ class Novel:
         self.page = novelToc["page"]
         self.link = novelToc["url"]
         self.seriesCode = novelToc["url"].split(".syosetu.com/", 1)[1]
-        if "/" in self.seriesCode: 
+        if "/" in self.seriesCode:
             self.seriesCode = self.seriesCode.split("/", 1)[0]
         
         # collect author and title metadata
@@ -84,9 +84,19 @@ class Novel:
     def genTableOfContents(self):
         tocInsert = ""
         tocInsertLegacy = ""
+        
+        i = 1
         for page in self.pages:
             indexBox = page.split("<div class=\"index_box\">", 1)[1]
             indexBox = page.split("</div><!--index_box-->", 1)[0]
+            
+            # print('indexBox: ', indexBox)
+            # write file into examples for each page
+            filePath = os.path.join(__location__, 'files/examples/index/' + str(i) + '.html')
+            with open(filePath, "w", encoding="utf-8") as output:
+                output.write(indexBox)
+            i += 1
+            
             for line in indexBox.splitlines():
                 if "class=\"chapter_title\"" in line:
                     chapter = line.split(">", 1)[1]
@@ -98,6 +108,14 @@ class Novel:
                     self.chapterCount+=1
                     tocInsert += "<li><a href=\"" + str(self.chapterCount) + ".xhtml\">" + entry + "</a></li>\n"
                     tocInsertLegacy += "<navPoint id=\"toc" + str(self.chapterCount) + "\" playOrder=\"" + str(self.chapterCount) + "\"><navLabel><text>" + entry + "</text></navLabel><content src=\"" + str(self.chapterCount) + ".xhtml\"/></navPoint>\n"
+        
+        # print('all chapters: ', self.chapterCount)
+        # print('tocInsert: ', tocInsert)
+        # print('tocInsertLegacy: ', tocInsertLegacy)
+        with open(os.path.join(__location__, 'files/examples/', 'tocInsert.html'), 'w') as f:
+            f.write(tocInsert)
+        with open(os.path.join(__location__, 'files/examples/', 'tocInsertLegacy.html'), 'w') as f:
+            f.write(tocInsertLegacy)
                 
         with open(os.path.join(__location__, 'files/nav.xhtml'), encoding="utf-8") as t:
             template = string.Template(t.read())
@@ -105,11 +123,16 @@ class Novel:
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
             with open(os.path.join(oebpsDir, "nav.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
+            with open(os.path.join(__location__, 'files/examples', "nav.xhtml"), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+            
         with open(os.path.join(__location__, 'files/toc.ncx'), encoding="utf-8") as t:
             template = string.Template(t.read())
             finalOutput = template.substitute(IDTAG=self.seriesCode, TITLETAG=self.title, TOCTAG=tocInsertLegacy)
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
             with open(os.path.join(oebpsDir, "toc.ncx"), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+            with open(os.path.join(__location__, 'files/examples', "toc.ncx"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
 
     def genTitlePage(self):
@@ -117,46 +140,48 @@ class Novel:
             template = string.Template(t.read())
             finalOutput = template.substitute(TITLETAG=self.title, AUTHORTAG=self.author)
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
+            # oebpsDir = os.path.join(__location__, 'files/examples')
             with open(os.path.join(oebpsDir, "titlepage.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
-
+                
     def getChapter(self, chapter):
-      chapterRequest = SyosetuRequest()
-      chapterRequest.link = self.link + "/" + str(chapter)
-      thisChapter = chapterRequest.getResponse()
-      
-      content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
-      title, content = content.split("</p>", 1)
-      content = content.split("<div class=\"novel_bn\">", 1)[0]
-      chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
-      for line in content.splitlines():
-          if "<br />" in line:
-              continue
-          elif "id=\"novel_honbun\"" in line:
-              continue
-          elif "id=\"novel_p\"" in line:
-              continue
-          elif "</div>" in line:
-              continue
-          elif "id=\"novel_a\"" in line:
-              line = "<br />\n"
-          elif "<p id=\"L" in line:
-              line = line.split(">", 1)[1]
-              line = line.split("</p>", 1)[0]
-              line = "<p>" + line + "</p>"
-          chapterText += line
-          chapterText += "\n"
-      with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
-          template = string.Template(t.read())
-          finalOutput = template.substitute(TITLETAG=self.title, BODYTAG=chapterText)
-          with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
-              output.write(finalOutput)
-              
-          with open(os.path.join(__location__, 'files/examples/chapter', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
-              output.write(finalOutput)
-              
-      return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
-
+        print(chapter)
+        
+        chapterRequest = SyosetuRequest()
+        chapterRequest.link = self.link + "/" + str(chapter)
+        thisChapter = chapterRequest.getResponse()
+        
+        content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
+        title, content = content.split("</p>", 1)
+        content = content.split("<div class=\"novel_bn\">", 1)[0]
+        chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
+        for line in content.splitlines():
+            if "<br />" in line:
+                continue
+            elif "id=\"novel_honbun\"" in line:
+                continue
+            elif "id=\"novel_p\"" in line:
+                continue
+            elif "</div>" in line:
+                continue
+            elif "id=\"novel_a\"" in line:
+                line = "<br />\n"
+            elif "<p id=\"L" in line:
+                line = line.split(">", 1)[1]
+                line = line.split("</p>", 1)[0]
+                line = "<p>" + line + "</p>"
+            chapterText += line
+            chapterText += "\n"
+        with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
+            template = string.Template(t.read())
+            finalOutput = template.substitute(TITLETAG=self.title, BODYTAG=chapterText)
+            with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+                
+            with open(os.path.join(__location__, 'files/examples/chapter', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+                
+        return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
 
     def genBook(self):
         self.tempDir = tempfile.TemporaryDirectory()
@@ -165,24 +190,19 @@ class Novel:
         self.genTitlePage()
         self.genTableOfContents()
 
-        # multithreading
-        results = []
-        def thread_run(chapter):
-            result = self.getChapter(chapter)
-            results.append(result)
-            
-        threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
-        for thread in threads:
-            thread.start()
-            
-        for thread in threads:
-            thread.join()
-        
         chapterList = ""
         chapterListAgain = ""
-        for result in results:
-            chapterList += result[0] + "\n"
-            chapterListAgain += result[1] + "\n"
+        
+        with ThreadPoolExecutor() as executor:
+            # Using a ThreadPoolExecutor to run getChapter concurrently
+            futures = [executor.submit(self.getChapter, i+1) for i in range(self.chapterCount)]
+            
+            # Collecting the results as they are completed
+            for future in as_completed(futures):
+                chapter_content = future.result()
+                # Assuming getChapter now returns a content/reference tuple as before
+                chapterList += chapter_content[0]
+                chapterListAgain += chapter_content[1]
 
         with open(os.path.join(__location__, 'files/content.opf'), encoding="utf-8") as t:
             template = string.Template(t.read())
@@ -217,13 +237,13 @@ if __name__ == "__main__":
         print("USAGE: syosetu2epub https://*syosetu.com/******")
         print("OUTPUT: EPUB formatted ebook will be generated in current working directory")
         os._exit(0)
-        
+
     start = time.time()
     print(using(f"start extract {myRequest.link}"))
 
     myNovel = Novel(myRequest.getResponse())
     myNovel.genBook()
-    
+
     end = time.time()
     print(using("end"))
     print("Time elapsed: ", end - start)

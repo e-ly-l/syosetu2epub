@@ -8,7 +8,7 @@ from datetime import datetime
 import requests
 import pytz
 
-import threading
+from multiprocessing import Pool
 
 import time
 import resource
@@ -21,6 +21,7 @@ def using(point=""):
 cwd = os.getcwd()
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
+# https://ncode.syosetu.com/n0611em/?p=3
 class SyosetuRequest:
     _page = 1
 
@@ -64,7 +65,7 @@ class Novel:
         self.page = novelToc["page"]
         self.link = novelToc["url"]
         self.seriesCode = novelToc["url"].split(".syosetu.com/", 1)[1]
-        if "/" in self.seriesCode: 
+        if "/" in self.seriesCode:
             self.seriesCode = self.seriesCode.split("/", 1)[0]
         
         # collect author and title metadata
@@ -84,9 +85,19 @@ class Novel:
     def genTableOfContents(self):
         tocInsert = ""
         tocInsertLegacy = ""
+        
+        i = 1
         for page in self.pages:
             indexBox = page.split("<div class=\"index_box\">", 1)[1]
             indexBox = page.split("</div><!--index_box-->", 1)[0]
+            
+            # print('indexBox: ', indexBox)
+            # write file into examples for each page
+            filePath = os.path.join(__location__, 'files/examples/index/' + str(i) + '.html')
+            with open(filePath, "w", encoding="utf-8") as output:
+                output.write(indexBox)
+            i += 1
+            
             for line in indexBox.splitlines():
                 if "class=\"chapter_title\"" in line:
                     chapter = line.split(">", 1)[1]
@@ -98,6 +109,14 @@ class Novel:
                     self.chapterCount+=1
                     tocInsert += "<li><a href=\"" + str(self.chapterCount) + ".xhtml\">" + entry + "</a></li>\n"
                     tocInsertLegacy += "<navPoint id=\"toc" + str(self.chapterCount) + "\" playOrder=\"" + str(self.chapterCount) + "\"><navLabel><text>" + entry + "</text></navLabel><content src=\"" + str(self.chapterCount) + ".xhtml\"/></navPoint>\n"
+        
+        # print('all chapters: ', self.chapterCount)
+        # print('tocInsert: ', tocInsert)
+        # print('tocInsertLegacy: ', tocInsertLegacy)
+        with open(os.path.join(__location__, 'files/examples/', 'tocInsert.html'), 'w') as f:
+            f.write(tocInsert)
+        with open(os.path.join(__location__, 'files/examples/', 'tocInsertLegacy.html'), 'w') as f:
+            f.write(tocInsertLegacy)
                 
         with open(os.path.join(__location__, 'files/nav.xhtml'), encoding="utf-8") as t:
             template = string.Template(t.read())
@@ -105,11 +124,16 @@ class Novel:
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
             with open(os.path.join(oebpsDir, "nav.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
+            with open(os.path.join(__location__, 'files/examples', "nav.xhtml"), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+            
         with open(os.path.join(__location__, 'files/toc.ncx'), encoding="utf-8") as t:
             template = string.Template(t.read())
             finalOutput = template.substitute(IDTAG=self.seriesCode, TITLETAG=self.title, TOCTAG=tocInsertLegacy)
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
             with open(os.path.join(oebpsDir, "toc.ncx"), "w", encoding="utf-8") as output:
+                output.write(finalOutput)
+            with open(os.path.join(__location__, 'files/examples', "toc.ncx"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
 
     def genTitlePage(self):
@@ -117,6 +141,7 @@ class Novel:
             template = string.Template(t.read())
             finalOutput = template.substitute(TITLETAG=self.title, AUTHORTAG=self.author)
             oebpsDir = os.path.join(self.tempDir.name, self.title, "OEBPS")
+            # oebpsDir = os.path.join(__location__, 'files/examples')
             with open(os.path.join(oebpsDir, "titlepage.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
 
@@ -157,7 +182,7 @@ class Novel:
               
       return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
 
-
+    
     def genBook(self):
         self.tempDir = tempfile.TemporaryDirectory()
         destination = shutil.copytree(os.path.join(__location__, 'template'), os.path.join(self.tempDir.name, self.title))
@@ -165,25 +190,16 @@ class Novel:
         self.genTitlePage()
         self.genTableOfContents()
 
-        # multithreading
-        results = []
-        def thread_run(chapter):
-            result = self.getChapter(chapter)
-            results.append(result)
-            
-        threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
-        for thread in threads:
-            thread.start()
-            
-        for thread in threads:
-            thread.join()
-        
         chapterList = ""
         chapterListAgain = ""
-        for result in results:
-            chapterList += result[0] + "\n"
-            chapterListAgain += result[1] + "\n"
-
+            
+        with Pool() as pool:
+            results = pool.map(self.getChapter, range(1, self.chapterCount + 1))
+        
+        for chapter_content, chapter_ref in results:
+            chapterList += chapter_content
+            chapterListAgain += chapter_ref
+            
         with open(os.path.join(__location__, 'files/content.opf'), encoding="utf-8") as t:
             template = string.Template(t.read())
             authorName = self.author.split("：", 1)[1]
@@ -217,7 +233,7 @@ if __name__ == "__main__":
         print("USAGE: syosetu2epub https://*syosetu.com/******")
         print("OUTPUT: EPUB formatted ebook will be generated in current working directory")
         os._exit(0)
-        
+
     start = time.time()
     print(using(f"start extract {myRequest.link}"))
 
