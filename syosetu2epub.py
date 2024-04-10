@@ -53,7 +53,6 @@ class SyosetuRequest:
             
             toc["pages"].append(r.text)
             
-        
         return toc
 
 class Novel:
@@ -169,7 +168,7 @@ class Novel:
         results = []
         def thread_run(chapter):
             result = self.getChapter(chapter)
-            results.append(result)
+            results.append([chapter, result])
             
         threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
         for thread in threads:
@@ -180,7 +179,10 @@ class Novel:
         
         chapterList = ""
         chapterListAgain = ""
-        for result in results:
+        
+        sorted_results = sorted(results, key=lambda x: int(x[0]))
+        for [chapter, result] in sorted_results:
+            # print('chapter:',chapter)
             chapterList += result[0] + "\n"
             chapterListAgain += result[1] + "\n"
 
