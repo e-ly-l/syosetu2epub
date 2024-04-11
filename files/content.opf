@@ -21,6 +21,7 @@
         <item media-type="application/xhtml+xml" href="nav.xhtml" id="_nav.xhtml" properties="nav" />
         <item media-type="application/x-dtbncx+xml" href="toc.ncx" id="_toc.ncx" />
         ${CHAPTERSTAG}
+        ${IMAGESTAG}
     </manifest>
     <spine page-progression-direction="rtl" toc="_toc.ncx">
         <itemref idref="_titlepage.xhtml" />
