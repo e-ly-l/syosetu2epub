@@ -198,8 +198,15 @@ class Novel:
         # multithreading
         results = []
         def thread_run(chapter):
-            result = self.getChapter(chapter)
-            results.append([chapter, result])
+            sleep_time =  chapter // 10 + random.random() * 3  # avoid too many access
+            # print(f"chapter {chapter} sleep {sleep_time}")
+            time.sleep(sleep_time)
+            try:
+                result = self.getChapter(chapter)
+                results.append([chapter, result])
+            except Exception as e:
+                print(f"chapter {chapter} error {e}")
+                # results.append([chapter, ["", ""]])
             
         threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
         for thread in threads:
