@@ -11,6 +11,8 @@ import pytz
 import random
 import string
 
+import threading
+
 import time
 import resource
 def using(point=""):
@@ -29,7 +31,6 @@ class TempDir():
 tempDir = tempfile.TemporaryDirectory()
 # tempDir = TempDir(os.path.join(__location__, 'files/examples/temp')) # for debugging
 
-# https://ncode.syosetu.com/n0611em/?p=3
 class SyosetuRequest:
     _page = 1
 
@@ -129,16 +130,16 @@ class Novel:
             with open(os.path.join(oebpsDir, "titlepage.xhtml"), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
 
-    def getChapter(self, chapter):     
-        chapterRequest = SyosetuRequest()
-        chapterRequest.link = self.link + "/" + str(chapter)
-        thisChapter = chapterRequest.getResponse()
-        
-        content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
-        title, content = content.split("</p>", 1)
-        content = content.split("<div class=\"novel_bn\">", 1)[0]
-        chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
-        for line in content.splitlines():
+    def getChapter(self, chapter):
+      chapterRequest = SyosetuRequest()
+      chapterRequest.link = self.link + "/" + str(chapter)
+      thisChapter = chapterRequest.getResponse()
+      
+      content = thisChapter["page"].split("<p class=\"novel_subtitle\">", 1)[1]
+      title, content = content.split("</p>", 1)
+      content = content.split("<div class=\"novel_bn\">", 1)[0]
+      chapterText = "<h2 id=\"toc_index_1\">" + title + "</h2>\n"
+      for line in content.splitlines():
             if "<br />" in line:
                 continue
             elif "id=\"novel_honbun\"" in line:
@@ -148,29 +149,28 @@ class Novel:
             elif "</div>" in line:
                 continue
             elif "<img" in line:
-                    line = line.replace("\"//", "\"https://")
-                    
-                    ori_img_src = line.split("src=\"", 1)[1]
-                    ori_img_src = ori_img_src.split("\"", 1)[0]
-                    img_src = ori_img_src
-                    
-                    if img_src.endswith('/'):
-                        img_src = img_src.rstrip("/")
-                    
-                    img_name = img_src.split("/")[-1]
-                    # img_name = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-                    
-                    if '.' not in img_name:
-                        img_name += '.jpg'
-                    
-                    img = requests.get(img_src)
-                    with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', img_name), "wb") as output:
-                        output.write(img.content)
-                    
-                    line = line.replace(ori_img_src, img_name)
-                    self.img_list.append(img_name)
-                    # print(self.img_list)
-
+                line = line.replace("\"//", "\"https://")
+                
+                ori_img_src = line.split("src=\"", 1)[1]
+                ori_img_src = ori_img_src.split("\"", 1)[0]
+                img_src = ori_img_src
+                
+                if img_src.endswith('/'):
+                    img_src = img_src.rstrip("/")
+                
+                img_name = img_src.split("/")[-1]
+                # img_name = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+                
+                if '.' not in img_name:
+                    img_name += '.jpg'
+                
+                img = requests.get(img_src)
+                with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', img_name), "wb") as output:
+                    output.write(img.content)
+                
+                line = line.replace(ori_img_src, img_name)
+                self.img_list.append(img_name)
+                # print(self.img_list)
             elif "id=\"novel_a\"" in line:
                 line = "<br />\n"
             elif "<p id=\"L" in line:
@@ -179,15 +179,15 @@ class Novel:
                 line = "<p>" + line + "</p>"
             chapterText += line
             chapterText += "\n"
-        with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
+      with open(os.path.join(__location__, 'files/chaptertemplate.xhtml'), encoding="utf-8") as t:
             template = string.Template(t.read())
             finalOutput = template.substitute(TITLETAG=self.title, BODYTAG=chapterText)
             with open(os.path.join(self.tempDir.name, self.title, 'OEBPS', (str(chapter) + '.xhtml')), "w", encoding="utf-8") as output:
                 output.write(finalOutput)
+              
+      return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
 
-        return tuple([f'<item media-type="application/xhtml+xml" href="{chapter}.xhtml" id="_{chapter}.xhtml" />',f'<itemref idref="_{chapter}.xhtml" />'])
 
-    
     def genBook(self):
         self.tempDir = tempDir
         destination = shutil.copytree(os.path.join(__location__, 'template'), os.path.join(self.tempDir.name, self.title))
@@ -195,17 +195,33 @@ class Novel:
         self.genTitlePage()
         self.genTableOfContents()
 
+        # multithreading
+        results = []
+        def thread_run(chapter):
+            result = self.getChapter(chapter)
+            results.append([chapter, result])
+            
+        threads = [threading.Thread(target=thread_run, args=(i+1,)) for i in range(self.chapterCount)]
+        for thread in threads:
+            thread.start()
+            
+        for thread in threads:
+            thread.join()
+        
         chapterList = ""
         chapterListAgain = ""
-        for i in range(self.chapterCount):
-            chapterList += f'       {self.getChapter(i + 1)[0]}\n'
-            chapterListAgain += f'       {self.getChapter(i + 1)[1]}\n'
+        
+        sorted_results = sorted(results, key=lambda x: int(x[0]))
+        for [chapter, result] in sorted_results:
+            # print('chapter:',chapter)
+            chapterList += f'       {result[0]}\n'
+            chapterListAgain += f'       {result[1]}\n'
             
         imgList = ""
         # print(self.img_list)
         for img in list(dict.fromkeys(self.img_list)):
             imgList += f'       <item media-type="image/jpeg" href="{img}" id="{img}" />\n'
-        
+
         with open(os.path.join(__location__, 'files/content.opf'), encoding="utf-8") as t:
             template = string.Template(t.read())
             authorName = self.author.split("：", 1)[1]
