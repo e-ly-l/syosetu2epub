@@ -9,7 +9,6 @@ import requests
 import pytz
 
 import random
-import string
 
 import time
 import resource
@@ -95,7 +94,7 @@ class Novel:
         tocInsertLegacy = ""
         for page in self.pages:
             indexBox = page.split("<div class=\"index_box\">", 1)[1]
-            indexBox = page.split("</div><!--index_box-->", 1)[0]
+            indexBox = indexBox.split("</div><!--index_box-->", 1)[0]
             for line in indexBox.splitlines():
                 if "class=\"chapter_title\"" in line:
                     chapter = line.split(">", 1)[1]
@@ -198,8 +197,9 @@ class Novel:
         chapterList = ""
         chapterListAgain = ""
         for i in range(self.chapterCount):
-            chapterList += f'       {self.getChapter(i + 1)[0]}\n'
-            chapterListAgain += f'       {self.getChapter(i + 1)[1]}\n'
+            item, itemref = self.getChapter(i + 1)
+            chapterList += f'       {item}\n'
+            chapterListAgain += f'       {itemref}\n'
             
         imgList = ""
         # print(self.img_list)

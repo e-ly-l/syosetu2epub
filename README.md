@@ -16,7 +16,6 @@ It will produce an e-reader friendly, valid EPUB3 document.
 
 ## Limitations
 
-Does not yet support image downloading and embedding from syosetu novels.
 Does not yet support downloading from a range of chapters, can only download entire Novels.
 
 ## with yomigama
